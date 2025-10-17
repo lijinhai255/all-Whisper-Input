@@ -5,6 +5,7 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
 - 🎉🎉由于目前已经发现了更好用的语音输入软件[WhisperKeyBoard](https://whisperkeyboard.app/)，非常推荐大家可以直接使用这款软件即可。Whisper Input 的中心将继续回到 Voice + Agents 上。
 
 - 支持由 SiliconFlow 托管的 `FunAudioLLM/SenseVoiceSmall` 模型，速度比 Groq 托管的 `Whisper Large V3 Turbo` 更快，识别更准确，并且自带标点符号。**最重要的是普通用户也无用量限制！**
+- 新增支持讯飞语音识别服务，提供流式识别和动态修正功能，识别效果优秀。
 
 ## 当前阶段工作（20250129 更新）
 当前阶段正在构建一个简易的 macOS 客户端。考虑到使用这个项目的大部分用户都是非程序员背景的，并且通常大量依赖语音输入功能的用户也有一部分是视力障碍用户，所以近期在着重做 macOS 客户端以及无障碍开发，未来将上线网站对外公布 macOS 客户端。如果你对 Windows 客户端的开发以及无障碍开发有经验和兴趣，欢迎与我联系：微信 geekthings。
@@ -22,12 +23,12 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
 
 
 
-**重点：Groq 和 SiliconFlow 都提供免费用量，并且都足够，无需付费，无需绑定信用卡**
+**重点：Groq、SiliconFlow 和讯飞都提供免费用量，并且都足够，无需付费，无需绑定信用卡**
 
 
 ## 使用方法
 
-> 目前支持两种免费的 ASR 模型，分别是 Groq 托管的 `Whisper Large V3 系列` 以及 SiliconFlow 托管的 `FunAudioLLM/SenseVoiceSmall` 系列。所以以下配置只需要二选一即可。
+> 目前支持三种免费的 ASR 模型，分别是 Groq 托管的 `Whisper Large V3 系列`、SiliconFlow 托管的 `FunAudioLLM/SenseVoiceSmall` 系列，以及讯飞语音识别服务。你可以选择其中任意一种，也可以使用混合模式自动故障转移。
 
 ### 前提
 请确保你的本地有 Python 环境，并且 Python 版本不低于 3.10。
@@ -77,6 +78,45 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
     python main.py
     ```
 
+### 混合模式配置方法
+
+混合模式会按优先级顺序尝试多个服务（SiliconFlow → 讯飞 → Groq），当某个服务失败时自动切换到下一个。
+
+```bash
+SERVICE_PLATFORM=hybrid
+ENABLE_FALLBACK=true
+# 同时配置多个服务的API KEY
+SILICONFLOW_API_KEY=your_siliconflow_key
+XUNFEI_APP_ID=your_xunfei_app_id
+XUNFEI_API_KEY=your_xunfei_api_key
+XUNFEI_API_SECRET=your_xunfei_secret
+GROQ_API_KEY=your_groq_key
+```
+
+### 讯飞语音识别配置方法
+1. 注册讯飞开放平台账户：https://console.xfyun.cn/
+2. 创建语音听写（流式版）应用，获取 APPID、APIKey 和 APISecret
+3. 打开 `终端` ，进入到想要下载项目的文件夹
+    ```bash
+    git clone git@github.com:ErlichLiu/Whisper-Input.git
+    ```
+4. 创建虚拟环境 【推荐】
+    ```bash
+    python -m venv venv
+    ```
+
+5. 重命名 `.env` 文件
+    ```bash
+    cp .env.example .env
+    ```
+
+6. 粘贴在第 2 步获取的认证信息到 `.env`  文件，效果类似
+    ```bash
+    SERVICE_PLATFORM=xunfei
+    XUNFEI_APP_ID=414dfd51
+    XUNFEI_API_KEY=bb6f62671318f6009c8c7ba61e088495
+    XUNFEI_API_SECRET=OTJmYjQ4YmMzMTVkY2E5MTE5Y2RlY2Mx
+    ```
 
 ### Groq Whisper Large V3 模型配置方法
 1. 注册 Groq 账户：https://console.groq.com/login
@@ -88,7 +128,7 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
 4. 创建虚拟环境 【推荐】
     ```bash
     python -m venv venv
-    `
+    ```
 5. 重命名 `.env` 文件
     ```bash
     cp .env.example .env
@@ -155,6 +195,12 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
 **如果你也有想法：** 欢迎 Fork 和 PR，如果你在使用当中遇到问题，欢迎提交 Issue。
 
 ## 更新日志
+
+#### 2025.01.17
+> 1. 新增讯飞语音识别服务支持，提供流式识别和动态修正功能
+> 2. 更新混合模式，支持SiliconFlow → 讯飞 → Groq的故障转移顺序
+> 3. 添加讯飞API测试脚本，方便验证配置
+> 4. 支持实时识别结果反馈（讯飞服务）
 
 #### 2025.01.25
 > 1. 支持通过环境变量配置恢复原始剪贴板内容，环境变量 `KEEP_ORIGINAL_CLIPBOARD` 默认为 `true` ，设置为 `false` 的时候不恢复

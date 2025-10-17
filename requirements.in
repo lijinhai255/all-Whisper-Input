@@ -1,4 +1,4 @@
-pynput 
+pynput
 openai
 pip-tools
 pyqt5
@@ -12,3 +12,4 @@ openai
 httpx
 requests
 opencc-python-reimplemented
+websockets

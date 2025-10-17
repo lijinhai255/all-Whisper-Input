@@ -11,6 +11,7 @@ from src.transcription.whisper import WhisperProcessor
 from src.utils.logger import logger
 from src.transcription.senseVoiceSmall import SenseVoiceSmallProcessor
 from src.transcription.hybrid import HybridProcessor
+from src.transcription.xunfei import XunfeiProcessor
 
 
 def check_microphone_permissions():
@@ -110,6 +111,9 @@ def main():
             # 混合模式：优先使用 SiliconFlow，失败时切换到 Groq
             audio_processor = HybridProcessor()
             logger.info("使用混合模式服务（优先 SiliconFlow，备用 Groq）")
+        elif service_platform == "xunfei":
+            audio_processor = XunfeiProcessor()
+            logger.info("使用讯飞语音识别服务")
         else:
             raise ValueError(f"无效的服务平台: {service_platform}")
 
