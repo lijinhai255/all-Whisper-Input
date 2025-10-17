@@ -88,13 +88,11 @@ Whisper Input 是受到即友[FeiTTT](https://web.okjike.com/u/DB98BE7A-9DBB-473
 4. 创建虚拟环境 【推荐】
     ```bash
     python -m venv venv
-    ```
-
+    `
 5. 重命名 `.env` 文件
     ```bash
     cp .env.example .env
     ```
-
 6. 粘贴在第 2 步复制的 API KEY 到 `.env`  文件，效果类似
     ```bash
     SERVICE_PLATFORM=groq

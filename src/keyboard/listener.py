@@ -43,12 +43,12 @@ class KeyboardManager:
         }
 
         # 获取系统平台
-        sysetem_platform = os.getenv("SYSTEM_PLATFORM")
-        if sysetem_platform == "win" :
-            self.sysetem_platform = Key.ctrl
+        system_platform = os.getenv("SYSTEM_PLATFORM")
+        if system_platform == "win" :
+            self.system_platform = Key.ctrl
             logger.info("配置到Windows平台")
         else:
-            self.sysetem_platform = Key.cmd
+            self.system_platform = Key.cmd
             logger.info("配置到Mac平台")
         
 
@@ -100,14 +100,18 @@ class KeyboardManager:
                     self.on_translate_start()
 
                 case InputState.PROCESSING:
+                    # 删除录音状态文本（"🎤 正在录音..."）
                     self._delete_previous_text()
+                    # 输入处理状态文本（"🔄 正在转录..."）
                     self.type_temp_text(message)
                     self.processing_text = message
                     self.on_record_stop()
 
                 case InputState.TRANSLATING:
                     # 翻译状态
-                    self._delete_previous_text()                 
+                    # 删除录音状态文本（"🎤 正在录音 (翻译模式)"）
+                    self._delete_previous_text()
+                    # 输入翻译状态文本（"🔄 正在翻译..."）
                     self.type_temp_text(message)
                     self.processing_text = message
                     self.on_translate_stop()
@@ -189,27 +193,52 @@ class KeyboardManager:
             
         try:
             logger.info("正在输入转录文本...")
-            self._delete_previous_text()
-            
+
+            # 确保删除之前的状态文本（"🔄 正在转录..." 或 "🔄 正在翻译..."）
+            if self.processing_text:
+                # 如果有处理中的文本，删除它
+                processing_length = len(self.processing_text)
+                logger.info(f"删除状态文本: '{self.processing_text}' (长度: {processing_length})")
+
+                # 使用更可靠的方法删除文本
+                for _ in range(processing_length):
+                    self.keyboard.press(Key.backspace)
+                    self.keyboard.release(Key.backspace)
+                    time.sleep(0.01)  # 短暂延迟确保每次删除都生效
+
+                self.processing_text = None
+                self.temp_text_length = 0
+                logger.info("状态文本删除完成")
+
+            # 额外检查：如果还有残留的 temp_text_length，也删除
+            if self.temp_text_length > 0:
+                logger.info(f"删除剩余临时文本 (长度: {self.temp_text_length})")
+                for _ in range(self.temp_text_length):
+                    self.keyboard.press(Key.backspace)
+                    self.keyboard.release(Key.backspace)
+                    time.sleep(0.01)
+                self.temp_text_length = 0
+
+            logger.info(f"输入文本：{text}")
             # 先输入文本和完成标记
             self.type_temp_text(text+" ✅")
-            
+
             # 等待一小段时间确保文本已输入
             time.sleep(0.5)
-            
+
             # 删除完成标记（2个字符：空格和✅）
             self.temp_text_length = 2
             self._delete_previous_text()
-            
+
             # 将转录结果复制到剪贴板
             if os.getenv("KEEP_ORIGINAL_CLIPBOARD", "true").lower() != "true":
                 pyperclip.copy(text)
             else:
                 # 恢复原始剪贴板内容
                 self._restore_clipboard()
-            
+
             logger.info("文本输入完成")
-            
+
             # 清理处理状态
             self.state = InputState.IDLE
         except Exception as e:
@@ -234,7 +263,7 @@ class KeyboardManager:
         pyperclip.copy(text)
 
         # 模拟 Ctrl + V 粘贴文本
-        with self.keyboard.pressed(self.sysetem_platform):
+        with self.keyboard.pressed(self.system_platform):
             self.keyboard.press('v')
             self.keyboard.release('v')
 

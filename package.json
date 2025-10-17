@@ -1,0 +1,26 @@
+{
+  "name": "whisper-voice-input",
+  "version": "1.0.0",
+  "description": "AI语音输入助手，基于Whisper和SenseVoice的实时语音转文字工具",
+  "main": "main.py",
+  "bin": {
+    "ai-voice": "./ai-voice.sh"
+  },
+  "preferGlobal": true,
+  "scripts": {
+    "start": "python main.py",
+    "voice": "python main.py"
+  },
+  "keywords": [
+    "whisper",
+    "voice",
+    "transcription",
+    "speech-to-text",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

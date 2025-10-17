@@ -10,6 +10,7 @@ from src.keyboard.listener import KeyboardManager, check_accessibility_permissio
 from src.transcription.whisper import WhisperProcessor
 from src.utils.logger import logger
 from src.transcription.senseVoiceSmall import SenseVoiceSmallProcessor
+from src.transcription.hybrid import HybridProcessor
 
 
 def check_microphone_permissions():
@@ -94,12 +95,36 @@ class VoiceAssistant:
 def main():
     # 判断是 Whisper 还是 SiliconFlow
     service_platform = os.getenv("SERVICE_PLATFORM", "siliconflow")
-    if service_platform == "groq":
-        audio_processor = WhisperProcessor()
-    elif service_platform == "siliconflow":
-        audio_processor = SenseVoiceSmallProcessor()
-    else:
-        raise ValueError(f"无效的服务平台: {service_platform}")
+
+    # 支持故障转移机制
+    enable_fallback = os.getenv("ENABLE_FALLBACK", "true").lower() == "true"
+
+    try:
+        if service_platform == "groq":
+            audio_processor = WhisperProcessor()
+            logger.info("使用 Groq Whisper 服务")
+        elif service_platform == "siliconflow":
+            audio_processor = SenseVoiceSmallProcessor()
+            logger.info("使用 SiliconFlow SenseVoice 服务")
+        elif service_platform == "hybrid":
+            # 混合模式：优先使用 SiliconFlow，失败时切换到 Groq
+            audio_processor = HybridProcessor()
+            logger.info("使用混合模式服务（优先 SiliconFlow，备用 Groq）")
+        else:
+            raise ValueError(f"无效的服务平台: {service_platform}")
+
+    except Exception as e:
+        if enable_fallback and service_platform == "siliconflow":
+            logger.warning("SiliconFlow 初始化失败，尝试切换到 Groq...")
+            try:
+                audio_processor = WhisperProcessor()
+                logger.info("已切换到 Groq Whisper 服务")
+            except Exception as fallback_error:
+                logger.error(f"Groq 也初始化失败: {fallback_error}")
+                raise e
+        else:
+            raise e
+
     try:
         assistant = VoiceAssistant(audio_processor)
         assistant.run()
