@@ -31,15 +31,15 @@ async def test_xunfei_format():
     app_id = os.getenv("XUNFEI_APP_ID")
     api_key = os.getenv("XUNFEI_API_KEY")
     api_secret = os.getenv("XUNFEI_API_SECRET")
-    host = "iat.xf-yun.com"
-    path = "/v1"
+    host = "iat-api.xfyun.cn"
+    path = "/v2/iat"
 
     print("=== 讯飞API格式测试 ===")
 
-    # 生成认证URL
+    # 生成认证URL - v2 API需要包含app_id
     import datetime
     timestamp = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
-    signature_origin = f"host: {host}\ndate: {timestamp}\nGET {path} HTTP/1.1"
+    signature_origin = f"host: {host}\ndate: {timestamp}\nGET {path} HTTP/1.1\napp_id: {app_id}"
     signature_sha = hmac.new(
         api_secret.encode('utf-8'),
         signature_origin.encode('utf-8'),
@@ -47,11 +47,11 @@ async def test_xunfei_format():
     ).digest()
     signature = base64.b64encode(signature_sha).decode('utf-8')
 
-    authorization_origin = f'api_key="{api_key}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature}"'
+    authorization_origin = f'api_key="{api_key}", algorithm="hmac-sha256", headers="host date request-line app_id", signature="{signature}"'
     authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode('utf-8')
     authorization_enc = quote(authorization)
 
-    uri = f"wss://{host}{path}?authorization={authorization_enc}&date={quote(timestamp)}&host={host}"
+    uri = f"wss://{host}{path}?authorization={authorization_enc}&date={quote(timestamp)}&host={host}&app_id={app_id}"
 
     try:
         print("尝试连接WebSocket...")
@@ -63,26 +63,10 @@ async def test_xunfei_format():
             test_audio_data = create_test_audio(2)
 
             format1_message = {
-                "header": {
-                    "app_id": app_id,
-                    "res_id": "test-request-001",
-                    "status": 0
-                },
-                "parameter": {
-                    "iat": {
-                        "domain": "iat",
-                        "language": "zh_cn",
-                        "accent": "mandarin"
-                    }
-                },
-                "payload": {
-                    "audio": {
-                        "encoding": "raw",
-                        "sample_rate": 16000,
-                        "seq": 0,
-                        "audio": "",
-                        "status": 0
-                    }
+                "data": {
+                    "status": 0,
+                    "audio": "",
+                    "encoding": "raw"
                 }
             }
 
@@ -94,25 +78,15 @@ async def test_xunfei_format():
                 result_data = json.loads(response)
                 print(f"格式1响应: {result_data}")
 
-                if result_data.get("header", {}).get("code") == 0:
+                if result_data.get("code") == 0:
                     print("✅ 格式1成功！尝试发送音频数据...")
 
                     # 发送音频数据
                     audio_message = {
-                        "header": {
-                            "app_id": app_id,
-                            "res_id": "test-request-001",
-                            "status": 2  # 结束状态
-                        },
-                        "parameter": {},
-                        "payload": {
-                            "audio": {
-                                "encoding": "raw",
-                                "sample_rate": 16000,
-                                "seq": 1,
-                                "audio": test_audio_data,
-                                "status": 2
-                            }
+                        "data": {
+                            "status": 2,  # 结束状态
+                            "audio": test_audio_data,
+                            "encoding": "raw"
                         }
                     }
 
@@ -126,7 +100,7 @@ async def test_xunfei_format():
 
                     return True
                 else:
-                    print(f"格式1失败: {result_data.get('header', {}).get('message', '未知错误')}")
+                    print(f"格式1失败: {result_data.get('message', '未知错误')}")
 
             except asyncio.TimeoutError:
                 print("格式1响应超时")

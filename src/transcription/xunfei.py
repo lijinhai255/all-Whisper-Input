@@ -8,6 +8,7 @@ import hmac
 import wave
 import io
 import uuid
+import asyncio
 from functools import wraps
 from typing import Optional, Callable, Tuple
 
@@ -61,8 +62,8 @@ class XunfeiProcessor:
         if not all([self.app_id, self.api_key, self.api_secret]):
             raise ValueError("未设置完整的讯飞API认证信息 (XUNFEI_APP_ID, XUNFEI_API_KEY, XUNFEI_API_SECRET)")
 
-        self.host = "iat.xf-yun.com"
-        self.path = "/v1"
+        self.host = "iat-api.xfyun.cn"
+        self.path = "/v2/iat"
         self.timeout_seconds = self.DEFAULT_TIMEOUT
 
         # 支持环境变量配置超时时间
@@ -80,17 +81,20 @@ class XunfeiProcessor:
         logger.info("讯飞语音处理器初始化完成")
 
     def _generate_auth_url(self) -> str:
-        """生成讯飞WebSocket认证URL"""
-        from urllib.parse import quote
+        """生成讯飞语音听写流式版 WebSocket认证URL"""
         import datetime
+        import hashlib
+        import hmac
+        import base64
+        from urllib.parse import quote
 
         # 使用RFC1123格式的时间
         timestamp = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-        # 构建签名字符串
+        # 构建签名原文
         signature_origin = f"host: {self.host}\ndate: {timestamp}\nGET {self.path} HTTP/1.1"
 
-        # 使用hmac-sha256进行加密
+        # 使用HMAC-SHA256进行加密
         signature_sha = hmac.new(
             self.api_secret.encode('utf-8'),
             signature_origin.encode('utf-8'),
@@ -154,195 +158,189 @@ class XunfeiProcessor:
             raise
 
     def _create_start_message(self) -> dict:
-        """创建开始识别的消息"""
+        """创建开始识别的消息 - 语音听写流式版格式"""
         return {
-            "header": {
-                "app_id": self.app_id,
-                "res_id": str(uuid.uuid4()),  # 生成唯一请求ID
-                "status": 0
+            "common": {
+                "app_id": self.app_id
             },
-            "parameter": {
-                "iat": {
-                    "domain": "slm",
-                    "language": "zh_cn",
-                    "accent": "mandarin",
-                    "encoding": "raw",
-                    "sample_rate": 16000,
-                    "vad_eos": 5000
-                }
+            "business": {
+                "language": "zh_cn",
+                "domain": "iat",
+                "accent": "mandarin",
+                "vad_eos": 5000,
+                "dwa": "wpgs"
             },
-            "payload": {
-                "audio": {
-                    "encoding": "raw",
-                    "sample_rate": 16000,
-                    "seq": 0,
-                    "audio": "",
-                    "status": 0
-                }
+            "data": {
+                "status": 0,  # 0表示第一帧
+                "encoding": "raw",
+                "audio": "",
+                "format": "audio/L16;rate=16000"
             }
         }
 
-    def _create_end_message(self) -> dict:
-        """创建结束识别的消息"""
+    def _create_audio_message(self, audio_data: str, status: int = 2) -> dict:
+        """创建音频数据消息 - 语音听写流式版格式"""
         return {
-            "header": {
-                "app_id": self.app_id,
-                "res_id": str(uuid.uuid4()),
-                "status": 2
-            },
-            "parameter": {},
-            "payload": {
-                "audio": {
-                    "encoding": "raw",
-                    "sample_rate": 16000,
-                    "seq": 0,
-                    "audio": "",
-                    "status": 2
-                }
+            "data": {
+                "status": status,  # 1表示中间帧，2表示最后一帧
+                "encoding": "raw",
+                "audio": audio_data,
+                "format": "audio/L16;rate=16000"
             }
         }
 
     @timeout_decorator(30)
     def _call_api_websocket(self, pcm_data: bytes,
                            on_partial_result: Optional[Callable[[str], None]] = None) -> str:
-        """通过WebSocket调用讯飞API"""
+        """通过WebSocket调用讯飞Spark API"""
 
         async def websocket_call():
             uri = self._generate_auth_url()
 
             try:
-                # 使用ping_timeout和close_timeout替代timeout参数
                 async with websockets.connect(uri, ping_timeout=self.timeout_seconds, close_timeout=self.timeout_seconds) as websocket:
-                    # 发送开始消息
-                    start_message = self._create_start_message()
-                    await websocket.send(json.dumps(start_message))
-                    logger.info("已发送开始识别消息")
+                    logger.info("WebSocket连接成功")
 
-                    # 生成唯一的res_id用于整个会话
-                    res_id = str(uuid.uuid4())
-
-                    # 分帧发送音频数据
-                    frame_size = 1280  # 40ms的音频数据 (16kHz * 16bit * 0.04s)
-                    total_frames = (len(pcm_data) + frame_size - 1) // frame_size
-
+                    # 接收识别结果
                     final_result = ""
+                    try:
+                        # 1. 发送开始消息
+                        logger.info("发送开始消息...")
+                        start_message = self._create_start_message()
+                        await websocket.send(json.dumps(start_message))
 
-                    for seq, i in enumerate(range(0, len(pcm_data), frame_size)):
-                        frame_data = pcm_data[i:i + frame_size]
-                        is_last = (i + frame_size) >= len(pcm_data)
-                        status = 2 if is_last else 1
+                        # 2. 等待服务器确认
+                        try:
+                            response = await asyncio.wait_for(websocket.recv(), timeout=5)
+                            result_data = json.loads(response)
+                            logger.debug(f"服务器确认: {result_data}")
 
-                        # 构造音频数据消息
-                        audio_message = {
-                            "header": {
-                                "app_id": self.app_id,
-                                "res_id": res_id,
-                                "status": status
-                            },
-                            "parameter": {},
-                            "payload": {
-                                "audio": {
-                                    "encoding": "raw",
-                                    "sample_rate": 16000,
-                                    "seq": seq,
-                                    "audio": base64.b64encode(frame_data).decode('utf-8'),
-                                    "status": status
-                                }
-                            }
-                        }
+                            if str(result_data.get("code", "")) != "0":
+                                error_msg = result_data.get("message", "未知错误")
+                                logger.debug(f"服务器响应: code={result_data.get('code')}, message={error_msg}")
+                                # 不抛出异常，继续处理
+                        except asyncio.TimeoutError:
+                            logger.warning("服务器确认超时，继续发送音频...")
 
+                        # 3. 发送音频数据
+                        logger.info("发送音频数据...")
+                        audio_b64 = base64.b64encode(pcm_data).decode('utf-8')
+                        audio_message = self._create_audio_message(audio_b64, status=2)  # status=2表示最后一帧
                         await websocket.send(json.dumps(audio_message))
 
-                        # 接收识别结果
-                        try:
-                            response = await websocket.recv()
-                            result_data = json.loads(response)
+                        # 2. 等待并接收识别结果
+                        timeout_count = 0
+                        max_wait_time = self.timeout_seconds  # 使用配置的超时时间
 
-                            if result_data.get("header", {}).get("code") == 0:
-                                # 解析识别结果
-                                payload = result_data.get("payload", {})
-                                result = payload.get("result", {})
+                        while timeout_count < max_wait_time * 10:  # 每0.1秒检查一次
+                            try:
+                                response = await asyncio.wait_for(websocket.recv(), timeout=0.1)
+                                result_data = json.loads(response)
 
-                                # 处理文本结果
-                                text_data = result.get("text", "")
-                                if text_data:
-                                    # 解码base64文本
-                                    try:
-                                        decoded_text = base64.b64decode(text_data).decode('utf-8')
-                                        if decoded_text:
-                                            if on_partial_result:
-                                                on_partial_result(decoded_text)
-                                            final_result = decoded_text
-                                    except:
-                                        # 如果base64解码失败，直接使用原文
-                                        if text_data:
-                                            if on_partial_result:
-                                                on_partial_result(text_data)
-                                            final_result = text_data
+                                logger.info(f"收到响应: code={result_data.get('code', 'N/A')}, status={result_data.get('data', {}).get('status', 'N/A')}")
+                                logger.debug(f"完整响应: {result_data}")
 
-                                # 备用解析方式 - 兼容旧格式
-                                if not final_result and "ws" in result:
-                                    ws = result.get("ws", [])
-                                    for item in ws:
-                                        cw = item.get("cw", [])
-                                        for word in cw:
-                                            final_result += word.get("w", "")
+                                # 解析语音听写流式版API响应格式
+                                if "code" in result_data and "data" in result_data:
+                                    # 标准响应格式
+                                    code = str(result_data.get("code", ""))
+                                    data = result_data.get("data", {})
+                                    sid = result_data.get("sid", "")
 
-                            else:
-                                error_msg = result_data.get("header", {}).get("message", "未知错误")
-                                logger.error(f"讯飞API返回错误: {error_msg}")
+                                    if code == "0":
+                                        # 成功响应，解析data字段
+                                        if isinstance(data, dict):
+                                            # 新格式：data.result.ws
+                                            if "result" in data and "ws" in data["result"]:
+                                                ws_data = data["result"]["ws"]
+                                                current_text = ""
+                                                for ws_item in ws_data:
+                                                    for cw_item in ws_item.get("cw", []):
+                                                        word = cw_item.get("w", "")
+                                                        if word:  # 只添加非空的词
+                                                            current_text += word
 
-                        except websockets.exceptions.ConnectionClosed:
-                            logger.warning("WebSocket连接已关闭")
-                            break
+                                                if current_text:
+                                                    final_result = current_text
+                                                    if on_partial_result:
+                                                        on_partial_result(current_text)
+                                                    logger.info(f"识别结果: {current_text}")
 
-                        # 控制发送频率，避免过快
-                        await asyncio.sleep(0.04)  # 40ms间隔
+                                            # 旧格式：data.cn
+                                            elif "cn" in data:
+                                                cn_data = data["cn"]
+                                                if "st" in cn_data and "rt" in cn_data["st"]:
+                                                    rt_data = cn_data["st"]["rt"]
+                                                    if rt_data and len(rt_data) > 0:
+                                                        ws_data = rt_data[0].get("ws", [])
+                                                        current_text = ""
+                                                        for ws_item in ws_data:
+                                                            for cw_item in ws_item.get("cw", []):
+                                                                current_text += cw_item.get("w", "")
 
-                    # 最后一个音频帧已经发送了status=2，不需要单独发送结束消息
-                    logger.info("所有音频帧发送完成")
+                                                        if current_text:
+                                                            final_result = current_text
+                                                            if on_partial_result:
+                                                                on_partial_result(current_text)
+                                                            logger.info(f"识别结果: {current_text}")
 
-                    # 等待最终结果
-                    try:
-                        # 等待一段时间让服务器处理最后的音频
-                        await asyncio.sleep(1)
+                                        # 检查是否是最终结果
+                                        if data.get("status", 0) == 2:  # status=2表示最后一帧
+                                            logger.info("收到最终结果，结束识别")
+                                            break
+                                    else:
+                                        logger.error(f"API错误: code={code}, sid={sid}")
+                                        break
 
-                        final_response = await websocket.recv()
-                        final_data = json.loads(final_response)
+                                elif "cn" in result_data:
+                                    # 直接返回语音听写格式
+                                    cn_data = result_data["cn"]
+                                    if "st" in cn_data and "rt" in cn_data["st"]:
+                                        rt_data = cn_data["st"]["rt"]
+                                        if rt_data and len(rt_data) > 0:
+                                            ws_data = rt_data[0].get("ws", [])
+                                            current_text = ""
+                                            for ws_item in ws_data:
+                                                for cw_item in ws_item.get("cw", []):
+                                                    current_text += cw_item.get("w", "")
 
-                        if final_data.get("header", {}).get("code") == 0:
-                            payload = final_data.get("payload", {})
-                            result = payload.get("result", {})
+                                            if current_text:
+                                                final_result = current_text
+                                                if on_partial_result:
+                                                    on_partial_result(current_text)
+                                                logger.info(f"识别结果: {current_text}")
 
-                            # 处理文本结果
-                            text_data = result.get("text", "")
-                            if text_data:
-                                try:
-                                    decoded_text = base64.b64decode(text_data).decode('utf-8')
-                                    if decoded_text:
-                                        final_result = decoded_text
-                                except:
-                                    if text_data:
-                                        final_result = text_data
+                                elif "code" in result_data:
+                                    # 错误响应或其他响应
+                                    code = str(result_data.get("code", ""))
+                                    message = result_data.get("message", "")
+                                    if code != "0":
+                                        logger.debug(f"API响应: code={code}, message={message}")
+                                        # code=0 是成功，其他是调试信息
 
-                            # 备用解析方式 - 兼容旧格式
-                            if not final_result and "ws" in result:
-                                ws = result.get("ws", [])
-                                final_text = ""
-                                for item in ws:
-                                    cw = item.get("cw", [])
-                                    for word in cw:
-                                        final_text += word.get("w", "")
-                                if final_text:
-                                    final_result = final_text
+                            except asyncio.TimeoutError:
+                                timeout_count += 1
+                                if timeout_count % 50 == 0:  # 每5秒打印一次
+                                    logger.debug(f"等待结果... ({timeout_count/10:.1f}s)")
+                            except websockets.exceptions.ConnectionClosed:
+                                logger.info("WebSocket连接关闭")
+                                break
+                            except json.JSONDecodeError:
+                                # 如果不是JSON，可能是纯文本响应
+                                if response and response.strip():
+                                    final_result = response
+                                    if on_partial_result:
+                                        on_partial_result(response)
+                                    logger.info(f"识别结果: {response}")
+                                    break
+
                     except Exception as e:
-                        logger.debug(f"获取最终结果时出错: {e}")
-                        pass  # 忽略最终结果的获取错误，使用已接收的结果
+                        logger.error(f"处理响应时出错: {e}")
 
                     return final_result
 
             except Exception as e:
-                logger.error(f"WebSocket连接失败: {e}")
+                logger.error(f"WebSocket通信失败: {e}")
                 raise
 
         # 运行异步WebSocket调用
